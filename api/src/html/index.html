@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SSE Test</title>
+</head>
+<body>
+    <pre id="log"></pre>
+    <script>
+      const batchId = "PASTE_A_REAL_BATCH_ID_HERE"
+      const es = new EventSource(`http://localhost:8080/batches/${batchId}/events`)
+      const log = document.getElementById("log")
+
+      es.onmessage = (e) => {
+        log.textContent += e.data + "\n"
+      }
+      es.onerror = (e) => {
+        log.textContent += "connection error/closed\n"
+      }
+    </script>
+</body>
+</html>
