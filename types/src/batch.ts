@@ -1,10 +1,17 @@
 import { z } from "zod"
 
 export const submittedUrlSchema = z
-  .url()
+  .string()
+  .trim()
+  .min(1, { message: "URL is required" })
   .refine((val) => {
-    const protocol = new URL(val).protocol
-    return protocol === "http:" || protocol === "https:"
+    let parsed: URL
+    try {
+      parsed = new URL(val)
+    } catch {
+      return false
+    }
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
   }, { message: "Must be a valid http:// or https:// URL" })
 
 export const batchStatusSchema = z.enum([

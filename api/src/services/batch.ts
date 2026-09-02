@@ -267,8 +267,9 @@ export const streamBatchUpdates = async (db: DB, batchId: string, reply: Fastify
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
+    "Access-Control-Allow-Origin": process.env.WEB_URL ?? "http://localhost:3000",
+    "Access-Control-Allow-Credentials": "true",
   })
-
 
 
   const initialBatch = await getBatchById(db, batchId)
@@ -282,15 +283,18 @@ export const streamBatchUpdates = async (db: DB, batchId: string, reply: Fastify
   const subscriber = createSubscriber()
   await subscriber.subscribe(batchUpdateKey(batchId))
 
+  const cleanup = () => {
+    subscriber.unsubscribe().catch(() => {})
+    subscriber.disconnect()
+  }
+
   subscriber.on("message", async () => {
     try {
       const latestBatch = await getBatchById(db, batchId)
-        reply.raw.write(`data: ${JSON.stringify(latestBatch)}\n\n`)
-
+      reply.raw.write(`data: ${JSON.stringify(latestBatch)}\n\n`)
 
       if (latestBatch.status === "completed" || latestBatch.status === "cancelled") {
-        await subscriber.unsubscribe()
-        await subscriber.quit()
+        cleanup() 
         reply.raw.end()
       }
     } catch (err) {
@@ -304,7 +308,6 @@ export const streamBatchUpdates = async (db: DB, batchId: string, reply: Fastify
 
   reply.raw.on("close", () => {
     clearInterval(ping)
-    subscriber.unsubscribe()
-    subscriber.quit()
+    cleanup() 
   })
 }

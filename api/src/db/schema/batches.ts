@@ -8,7 +8,6 @@ export const batchTable = pgTable("batch", {
   completedCount: integer().notNull().default(0),
   successCount: integer().notNull().default(0),
   failedCount: integer().notNull().default(0),
-  eventSeq: integer().notNull().default(0),
   createdAt: timestamp().notNull().defaultNow(),
   updatedAt: timestamp().notNull().defaultNow(),
 });

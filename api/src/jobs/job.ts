@@ -1,12 +1,12 @@
 import { UrlCheckJobData } from "@task/types"
 import { DelayedError, Job } from "bullmq"
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq, inArray, sql } from "drizzle-orm"
 import { checkRateLimit } from "../lib/rate-limit"
 import { batchTable, urlTable } from "../db/schema"
 import { db } from "../db/db"
 import { urlCheckController } from "./controller"
 import { RedisInstance } from "../plugins/redis"
-import { batchUpdateKey, PUBSUB_TYPES } from "../lib/constants"
+import { batchUpdateKey, KEYS } from "../lib/constants"
 
 async function isBatchCancelled(batchId: string) {
   const batch = await db.query.batchTable.findFirst({ where: { id: batchId } })
@@ -24,6 +24,10 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
     throw new DelayedError()
   }
 
+
+console.log(`rate-limiter request allowed at ${Date.now()} — global limit: 10/sec across all workers`)
+
+
   const updatedBatch = await db.transaction(async (tx) => {
     const [batch] = await tx
       .update(batchTable)
@@ -40,17 +44,14 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
   })
 
   if (updatedBatch) {
-    await redis.publish(
-      batchUpdateKey(batchId),
-      JSON.stringify({ type: PUBSUB_TYPES.BATCH_RUNNING, batch: updatedBatch })
-    )
+    await redis.publish(batchUpdateKey(batchId), "1")
   }
 
   const checkResult = await urlCheckController(url)
 
   if (await isBatchCancelled(batchId)) return
 
-  await db
+  const [updated] = await db
     .update(urlTable)
     .set({
       status: "success",
@@ -60,7 +61,10 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
       attemptCount: job.attemptsMade + 1,
       updatedAt: new Date(),
     })
-    .where(eq(urlTable.id, urlId))
+    .where(and(eq(urlTable.id, urlId), inArray(urlTable.status, ["pending", "processing"])))
+    .returning()
+
+  if (!updated) return
 
   await onUrlSettled(batchId, "success", redis)
 }
@@ -91,10 +95,8 @@ export async function onUrlSettled(
       .update(batchTable)
       .set({ status: "completed", updatedAt: new Date() })
       .where(eq(batchTable.id, batchId))
+
   }
 
-  await redis.publish(
-    batchUpdateKey(batchId),
-    JSON.stringify({ type: PUBSUB_TYPES.URL_SETTLED, outcome })
-  )
+  await redis.publish(batchUpdateKey(batchId), "1")
 }

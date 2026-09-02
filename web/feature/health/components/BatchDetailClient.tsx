@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -13,7 +14,6 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
   const [batch, setBatch] = useState(initialBatch)
   const [cancelling, setCancelling] = useState(false)
   const [retrying, setRetrying] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isTerminal(initialBatch.status)) return
@@ -22,9 +22,18 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
       `${process.env.NEXT_PUBLIC_API_URL}/batches/${initialBatch.id}/events`
     )
     source.onmessage = (event) => {
-      const next = JSON.parse(event.data) as BatchWithUrls
-      setBatch(next)
-      if (isTerminal(next.status)) source.close()
+      try {
+        const next = JSON.parse(event.data) as BatchWithUrls
+        setBatch(next)
+        if (isTerminal(next.status)) source.close()
+      } catch {
+        toast.error("Received a malformed update from the server")
+      }
+    }
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) {
+        toast.error("Live updates disconnected. Refresh to reconnect.")
+      }
     }
 
     return () => source.close()
@@ -35,11 +44,11 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
 
   async function onCancel() {
     setCancelling(true)
-    setActionError(null)
     try {
       await cancelBatch(batch.id)
+      toast.success("Batch cancelled")
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to cancel batch")
+      toast.error(err instanceof Error ? err.message : "Failed to cancel batch")
     } finally {
       setCancelling(false)
     }
@@ -47,18 +56,18 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
 
   async function onRetry() {
     setRetrying(true)
-    setActionError(null)
     try {
       await retryFailed(batch.id)
+      toast.success("Retrying failed URLs")
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to retry")
+      toast.error(err instanceof Error ? err.message : "Failed to retry failed URLs")
     } finally {
       setRetrying(false)
     }
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-7xl px-6 py-10">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Batch {batch.id}</h1>
@@ -81,8 +90,6 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
           </Button>
         </div>
       </div>
-
-      {actionError && <p className="mb-4 text-sm text-destructive">{actionError}</p>}
 
       <Card className="mb-8">
         <CardHeader>
@@ -113,6 +120,7 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
                 <TableHead>Status</TableHead>
                 <TableHead>HTTP</TableHead>
                 <TableHead>Time</TableHead>
+                <TableHead>Attempts</TableHead>
                 <TableHead>Title</TableHead>
                 <TableHead>Error</TableHead>
               </TableRow>
@@ -120,7 +128,7 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
             <TableBody>
               {batch.urls.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell className="font-medium">{row.url}</TableCell>
+                  <TableCell className="max-w-md break-all font-medium">{row.url}</TableCell>
                   <TableCell>
                     <Badge className={statusColor[row.status]} variant="secondary">
                       {row.status}
@@ -130,11 +138,17 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
                   <TableCell>
                     {row.responseTimeMs != null ? `${row.responseTimeMs} ms` : "—"}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate text-muted-foreground">
+                  <TableCell className="tabular-nums text-muted-foreground">
+                    {row.attemptCount > 0 ? row.attemptCount : "—"}
+                  </TableCell>
+                  <TableCell className="max-w-xs truncate text-muted-foreground" title={row.title ?? undefined}>
                     {row.title ?? "—"}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate text-destructive">
-                    {row.errorMessage ?? ""}
+                  <TableCell
+                    className="min-w-[16rem] max-w-lg whitespace-normal wrap-break-word text-destructive"
+                    title={row.errorMessage ?? undefined}
+                  >
+                    {row.errorMessage ?? "—"}
                   </TableCell>
                 </TableRow>
               ))}

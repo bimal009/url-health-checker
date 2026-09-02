@@ -20,11 +20,9 @@ export const urlTable = pgTable("url", {
   responseTimeMs: integer(),
   title: text(),
   attemptCount: integer().notNull().default(0),
-  eventSeq: integer().notNull().default(0),
   jobId: text(),
   errorMessage: text(),
   createdAt: timestamp().notNull().defaultNow(),
   updatedAt: timestamp().notNull().defaultNow(),
 });
-
 

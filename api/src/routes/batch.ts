@@ -69,7 +69,7 @@ export const batchRoutes: FastifyPluginAsyncZod = async (fastify) => {
     { schema: { params: idParamsSchema } },
     async (request, reply) => {
       try {
-        return await cancelBatch(fastify.db, request.params.id, fastify.redis)
+        return await cancelBatch(fastify.db, fastify.redis, request.params.id)
       } catch (err) {
         if (err instanceof NotFoundError) {
           reply.code(404)
@@ -89,7 +89,7 @@ export const batchRoutes: FastifyPluginAsyncZod = async (fastify) => {
     { schema: { params: idParamsSchema } },
     async (request, reply) => {
       try {
-        return await retryFailed(fastify.db, request.params.id, fastify.redis)
+        return await retryFailed(fastify.db, fastify.redis, request.params.id)
       } catch (err) {
         if (err instanceof NotFoundError) {
           reply.code(404)
