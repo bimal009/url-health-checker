@@ -47,32 +47,17 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
   if (started.firstInBatch) await invalidateBatchList(redis)
   await redis.publish(batchUpdateKey(batchId), "1")
 
-  try {
-    const result = await urlCheckController(url)
+  const result = await urlCheckController(url)
 
-    if (await batchIsCancelled(batchId)) return
+  if (await batchIsCancelled(batchId)) return
 
-    await settleUrl(batchId, urlId, "success", redis, {
-      httpStatusCode: result.httpStatusCode,
-      responseTimeMs: result.responseTimeMs,
-      title: result.title,
-      errorMessage: null,
-      attemptCount: job.attemptsMade + 1,
-    })
-  } catch (err) {
-    if (await batchIsCancelled(batchId)) return
-
-    const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1)
-    if (!isFinalAttempt) throw err
-
-    await settleUrl(batchId, urlId, "failed", redis, {
-      httpStatusCode: null,
-      responseTimeMs: null,
-      title: null,
-      errorMessage: err instanceof Error ? err.message : String(err),
-      attemptCount: job.attemptsMade + 1,
-    })
-  }
+  await settleUrl(batchId, urlId, "success", redis, {
+    httpStatusCode: result.httpStatusCode,
+    responseTimeMs: result.responseTimeMs,
+    title: result.title,
+    errorMessage: null,
+    attemptCount: job.attemptsMade + 1,
+  })
 }
 
 export async function settleUrl(
