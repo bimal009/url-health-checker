@@ -15,24 +15,6 @@ const notify = (redis: RedisInstance, batchId: string) =>
     console.error(`Failed to publish update for batch ${batchId}:`, err)
   })
 
-async function enqueueChecks(db: DB, batchId: string, rows: { id: string; url: string }[]) {
-  const jobs = await urlCheckQueue.addBulk(
-    rows.map((row) => ({
-      name: "check-url",
-      data: { urlId: row.id, batchId, url: row.url },
-      opts: { attempts: 3, backoff: { type: "exponential" as const, delay: 1000 } },
-    }))
-  )
-
-  await db.transaction((tx) =>
-    Promise.all(
-      jobs.map((job, i) =>
-        tx.update(urlTable).set({ jobId: job.id }).where(eq(urlTable.id, rows[i].id))
-      )
-    )
-  )
-}
-
 export async function createBatch(db: DB, input: CreateBatchInput, redis: RedisInstance) {
   const { batch, urls } = await db.transaction(async (tx) => {
     const [batch] = await tx
@@ -49,7 +31,21 @@ export async function createBatch(db: DB, input: CreateBatchInput, redis: RedisI
   })
 
   try {
-    await enqueueChecks(db, batch.id, urls)
+    const jobs = await urlCheckQueue.addBulk(
+      urls.map((row) => ({
+        name: "check-url",
+        data: { urlId: row.id, batchId: batch.id, url: row.url },
+        opts: { attempts: 3, backoff: { type: "exponential" as const, delay: 1000 } },
+      }))
+    )
+
+    await db.transaction((tx) =>
+      Promise.all(
+        jobs.map((job, i) =>
+          tx.update(urlTable).set({ jobId: job.id }).where(eq(urlTable.id, urls[i].id))
+        )
+      )
+    )
   } catch (err) {
     await db.transaction(async (tx) => {
       await tx
@@ -170,7 +166,21 @@ export async function retryFailed(db: DB, redis: RedisInstance, batchId: string)
   })
 
   try {
-    await enqueueChecks(db, batchId, failed)
+    const jobs = await urlCheckQueue.addBulk(
+      failed.map((row) => ({
+        name: "check-url",
+        data: { urlId: row.id, batchId, url: row.url },
+        opts: { attempts: 3, backoff: { type: "exponential" as const, delay: 1000 } },
+      }))
+    )
+
+    await db.transaction((tx) =>
+      Promise.all(
+        jobs.map((job, i) =>
+          tx.update(urlTable).set({ jobId: job.id }).where(eq(urlTable.id, failed[i].id))
+        )
+      )
+    )
   } catch (err) {
     await db.transaction(async (tx) => {
       await tx

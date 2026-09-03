@@ -121,6 +121,25 @@ with total traffic.
 
 ### Live updates
 
+**Why not polling.** The simplest option is having the browser re-fetch the batch every second or
+two. It works, but it's wasteful. Most polls return nothing new, and it puts a floor on latency:
+an update is only ever as fresh as the polling interval, and a shorter interval just means more
+wasted requests. It also scales badly. N open batch pages means N times some fixed request rate
+hitting the API constantly, whether anything changed or not.
+
+**Why not WebSockets.** WebSockets are bidirectional and full duplex, but this system never needs
+the client to send anything after the initial connection. The real writes (cancel, retry) already
+go through normal POST requests, so bidirectionality here would be unused capability. WebSockets
+also don't reconnect on their own. A dropped connection needs hand-written reconnect and backoff
+logic in the browser. And a WebSocket server needs its own upgrade handshake and a different set
+of infrastructure assumptions, since some proxies and load balancers need explicit configuration
+to pass WebSocket traffic through, where SSE is just a long-lived HTTP response.
+
+**Why SSE.** The data only ever flows server to client, which is exactly what SSE is for. The
+browser's `EventSource` API reconnects automatically on a dropped connection with no code required
+on the client side. And since it's plain HTTP, it passes through typical infrastructure without
+special handling.
+
 Workers publish to `batch:<id>:updates` on Redis. The SSE endpoint (`GET /batches/:id/events`)
 subscribes and, on each message, re-reads the batch from Postgres and pushes the full state.
 Because the transport is Redis pub/sub and the source of truth is Postgres, this is correct
