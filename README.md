@@ -80,7 +80,9 @@ server-renders the full state from Postgres.
 **Global rate limit (10 requests per second)**: a Redis Lua script (`api/src/lib/rate-limit.ts`)
 maintains one sliding window sorted set under a single fixed key. Every worker in every process
 checks it before making a request, so the limit is system-wide. When the limit is hit, the job is
-moved to a short delay via `moveToDelayed` and re-run; this does not consume a retry attempt.
+moved to a short delay via `moveToDelayed` and re-run; this does not consume a retry attempt. The
+algorithm follows the sliding window log pattern described in Redis's own rate limiting guide:
+https://redis.io/tutorials/howtos/ratelimiting/#2-sliding-window-log
 
 **Concurrency (5)**: `Queue.setGlobalConcurrency(5)` is set at worker startup, so 5 is the ceiling
 across all worker processes, not per process. Each worker also runs with a local `concurrency: 5`.
