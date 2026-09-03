@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { urlRowSchema } from "./url"
 
 export const submittedUrlSchema = z
   .string()
@@ -30,11 +31,16 @@ export const batchRowSchema = z.object({
   completedCount: z.number().int(),
   successCount: z.number().int(),
   failedCount: z.number().int(),
-  eventSeq: z.number().int(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 })
 export type BatchRow = z.infer<typeof batchRowSchema>
+
+
+export const batchWithUrlsSchema = batchRowSchema.extend({
+  urls: z.array(urlRowSchema),
+})
+export type BatchWithUrls = z.infer<typeof batchWithUrlsSchema>
 
 
 export const createBatchSchema = z.object({

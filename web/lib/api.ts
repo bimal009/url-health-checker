@@ -1,58 +1,36 @@
 import type {
   BatchRow,
+  BatchWithUrls,
   CancelBatchResponse,
   RetryBatchResponse,
-  UrlRow,
 } from "@task/types"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL
+const API = process.env.NEXT_PUBLIC_API_URL
 
-export type BatchWithUrls = BatchRow & { urls: UrlRow[] }
+export type { BatchWithUrls }
 
 export async function getBatches(): Promise<BatchRow[]> {
-  try {
-    const res = await fetch(`${API_URL}/batches`, { next: { revalidate: 30 } })
-    if (!res.ok) throw new Error(`Failed to fetch batches (${res.status})`)
-    return await res.json()
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? err.message : "Failed to fetch batches"
-    )
-  }
+  const res = await fetch(`${API}/batches`, { cache: "no-store" })
+  if (!res.ok) throw new Error("Couldn't load batches")
+  return res.json()
 }
 
 export async function getBatch(id: string): Promise<BatchWithUrls> {
-  try {
-    const res = await fetch(`${API_URL}/batches/${id}`, { cache: "no-store" })
-    if (!res.ok) throw new Error(`Failed to fetch batch (${res.status})`)
-    return await res.json()
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? err.message : "Failed to fetch batch"
-    )
-  }
+  const res = await fetch(`${API}/batches/${id}`, { cache: "no-store" })
+  if (res.status === 404) throw new Error("Batch not found")
+  if (!res.ok) throw new Error("Couldn't load batch")
+  return res.json()
 }
 
 export async function cancelBatch(id: string): Promise<CancelBatchResponse> {
-  try {
-    const res = await fetch(`${API_URL}/batches/${id}/cancel`, { method: "POST" })
-    if (!res.ok) throw new Error(`Failed to cancel batch (${res.status})`)
-    return await res.json()
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? err.message : "Failed to cancel batch"
-    )
-  }
+  const res = await fetch(`${API}/batches/${id}/cancel`, { method: "POST" })
+  if (res.status === 409) throw new Error("This batch can't be cancelled anymore")
+  if (!res.ok) throw new Error("Couldn't cancel the batch")
+  return res.json()
 }
 
 export async function retryFailed(id: string): Promise<RetryBatchResponse> {
-  try {
-    const res = await fetch(`${API_URL}/batches/${id}/retry`, { method: "POST" })
-    if (!res.ok) throw new Error(`Failed to retry (${res.status})`)
-    return await res.json()
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? err.message : "Failed to retry"
-    )
-  }
+  const res = await fetch(`${API}/batches/${id}/retry`, { method: "POST" })
+  if (!res.ok) throw new Error("Couldn't retry the failed URLs")
+  return res.json()
 }

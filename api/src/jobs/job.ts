@@ -1,4 +1,4 @@
-import { UrlCheckJobData } from "@task/types"
+import { UrlCheckJobData, UrlSettleFields } from "@task/types"
 import { DelayedError, Job } from "bullmq"
 import { and, eq, inArray, sql } from "drizzle-orm"
 import { checkRateLimit } from "../lib/rate-limit"
@@ -6,9 +6,12 @@ import { batchTable, urlTable } from "../db/schema"
 import { db } from "../db/db"
 import { urlCheckController } from "./controller"
 import { RedisInstance } from "../plugins/redis"
-import { batchUpdateKey, KEYS } from "../lib/constants"
+import { batchUpdateKey } from "../lib/constants"
+import { invalidateBatchList } from "../lib/cache"
 
-async function isBatchCancelled(batchId: string) {
+const notDone = inArray(urlTable.status, ["pending", "processing"])
+
+async function batchIsCancelled(batchId: string) {
   const batch = await db.query.batchTable.findFirst({ where: { id: batchId } })
   return !batch || batch.status === "cancelled"
 }
@@ -16,87 +19,88 @@ async function isBatchCancelled(batchId: string) {
 export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance) {
   const { urlId, batchId, url } = job.data
 
-  if (await isBatchCancelled(batchId)) return
+  if (await batchIsCancelled(batchId)) return
 
-  const allowed = await checkRateLimit(redis)
-  if (!allowed) {
+  if (!(await checkRateLimit(redis))) {
     await job.moveToDelayed(Date.now() + 100, job.token)
     throw new DelayedError()
   }
 
+  const started = await db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(urlTable)
+      .set({ status: "processing", updatedAt: new Date() })
+      .where(and(eq(urlTable.id, urlId), notDone))
+      .returning()
 
-console.log(`rate-limiter request allowed at ${Date.now()} — global limit: 10/sec across all workers`)
+    if (!claimed) return null
 
-
-  const updatedBatch = await db.transaction(async (tx) => {
     const [batch] = await tx
       .update(batchTable)
       .set({ status: "running", updatedAt: new Date() })
       .where(and(eq(batchTable.id, batchId), eq(batchTable.status, "pending")))
       .returning()
 
-    await tx
-      .update(urlTable)
-      .set({ status: "processing", updatedAt: new Date() })
-      .where(eq(urlTable.id, urlId))
-
-    return batch
+    return { firstInBatch: !!batch }
   })
 
-  if (updatedBatch) {
-    await redis.publish(batchUpdateKey(batchId), "1")
-  }
+  if (!started) return
 
-  const checkResult = await urlCheckController(url)
+  if (started.firstInBatch) await invalidateBatchList(redis)
+  await redis.publish(batchUpdateKey(batchId), "1")
 
-  if (await isBatchCancelled(batchId)) return
+  const result = await urlCheckController(url)
 
-  const [updated] = await db
-    .update(urlTable)
-    .set({
-      status: "success",
-      httpStatusCode: checkResult.httpStatusCode,
-      responseTimeMs: checkResult.responseTimeMs,
-      title: checkResult.title,
-      attemptCount: job.attemptsMade + 1,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(urlTable.id, urlId), inArray(urlTable.status, ["pending", "processing"])))
-    .returning()
+  if (await batchIsCancelled(batchId)) return
 
-  if (!updated) return
-
-  await onUrlSettled(batchId, "success", redis)
+  await settleUrl(batchId, urlId, "success", redis, {
+    httpStatusCode: result.httpStatusCode,
+    responseTimeMs: result.responseTimeMs,
+    title: result.title,
+    errorMessage: null,
+    attemptCount: job.attemptsMade + 1,
+  })
 }
 
-export async function onUrlSettled(
+export async function settleUrl(
   batchId: string,
+  urlId: string,
   outcome: "success" | "failed",
-  redis: RedisInstance
+  redis: RedisInstance,
+  fields: UrlSettleFields
 ) {
-  const wasSuccess = outcome === "success" ? 1 : 0
-  const wasFailed = outcome === "failed" ? 1 : 0
+  const batch = await db.transaction(async (tx) => {
+    const [settled] = await tx
+      .update(urlTable)
+      .set({ status: outcome, updatedAt: new Date(), ...fields })
+      .where(and(eq(urlTable.id, urlId), notDone))
+      .returning()
 
-  const [updatedBatch] = await db
-    .update(batchTable)
-    .set({
-      completedCount: sql`${batchTable.completedCount} + 1`,
-      successCount: sql`${batchTable.successCount} + ${wasSuccess}`,
-      failedCount: sql`${batchTable.failedCount} + ${wasFailed}`,
-      updatedAt: new Date(),
-    })
-    .where(eq(batchTable.id, batchId))
-    .returning()
+    if (!settled) return null
 
-  const allUrlsDone = updatedBatch && updatedBatch.completedCount >= updatedBatch.totalUrls
+    const [row] = await tx
+      .update(batchTable)
+      .set({
+        completedCount: sql`${batchTable.completedCount} + 1`,
+        successCount: sql`${batchTable.successCount} + ${outcome === "success" ? 1 : 0}`,
+        failedCount: sql`${batchTable.failedCount} + ${outcome === "failed" ? 1 : 0}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(batchTable.id, batchId))
+      .returning()
 
-  if (allUrlsDone) {
+    return row ?? null
+  })
+
+  if (!batch) return
+
+  if (batch.status === "running" && batch.completedCount >= batch.totalUrls) {
     await db
       .update(batchTable)
       .set({ status: "completed", updatedAt: new Date() })
-      .where(eq(batchTable.id, batchId))
-
+      .where(and(eq(batchTable.id, batchId), eq(batchTable.status, "running")))
   }
 
+  await invalidateBatchList(redis)
   await redis.publish(batchUpdateKey(batchId), "1")
 }

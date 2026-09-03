@@ -1,13 +1,21 @@
-export class NotFoundError extends Error {
-  constructor(message: string) {
+export class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string
+  ) {
     super(message)
-    this.name = "NotFoundError"
+    this.name = new.target.name
   }
 }
 
-export class ConflictError extends Error {
+export class NotFoundError extends HttpError {
   constructor(message: string) {
-    super(message)
-    this.name = "ConflictError"
+    super(404, message)
+  }
+}
+
+export class ConflictError extends HttpError {
+  constructor(message: string) {
+    super(409, message)
   }
 }

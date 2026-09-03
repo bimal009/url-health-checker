@@ -1,7 +1,6 @@
 import { Redis } from "ioredis"
-import "dotenv/config"
+import { env } from "./env"
 
-
-export const bullMqConnection = new Redis(process.env.REDIS_URL!, {
+export const bullMqConnection = new Redis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
 })
