@@ -9,8 +9,6 @@ import { RedisInstance } from "../plugins/redis"
 import { batchUpdateKey } from "../lib/constants"
 import { invalidateBatchList } from "../lib/cache"
 
-const notDone = inArray(urlTable.status, ["pending", "processing"])
-
 async function batchIsCancelled(batchId: string) {
   const batch = await db.query.batchTable.findFirst({ where: { id: batchId } })
   return !batch || batch.status === "cancelled"
@@ -30,7 +28,7 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
     const [claimed] = await tx
       .update(urlTable)
       .set({ status: "processing", updatedAt: new Date() })
-      .where(and(eq(urlTable.id, urlId), notDone))
+      .where(and(eq(urlTable.id, urlId), inArray(urlTable.status, ["pending", "processing"])))
       .returning()
 
     if (!claimed) return null
@@ -49,17 +47,32 @@ export async function processJob(job: Job<UrlCheckJobData>, redis: RedisInstance
   if (started.firstInBatch) await invalidateBatchList(redis)
   await redis.publish(batchUpdateKey(batchId), "1")
 
-  const result = await urlCheckController(url)
+  try {
+    const result = await urlCheckController(url)
 
-  if (await batchIsCancelled(batchId)) return
+    if (await batchIsCancelled(batchId)) return
 
-  await settleUrl(batchId, urlId, "success", redis, {
-    httpStatusCode: result.httpStatusCode,
-    responseTimeMs: result.responseTimeMs,
-    title: result.title,
-    errorMessage: null,
-    attemptCount: job.attemptsMade + 1,
-  })
+    await settleUrl(batchId, urlId, "success", redis, {
+      httpStatusCode: result.httpStatusCode,
+      responseTimeMs: result.responseTimeMs,
+      title: result.title,
+      errorMessage: null,
+      attemptCount: job.attemptsMade + 1,
+    })
+  } catch (err) {
+    if (await batchIsCancelled(batchId)) return
+
+    const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1)
+    if (!isFinalAttempt) throw err
+
+    await settleUrl(batchId, urlId, "failed", redis, {
+      httpStatusCode: null,
+      responseTimeMs: null,
+      title: null,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      attemptCount: job.attemptsMade + 1,
+    })
+  }
 }
 
 export async function settleUrl(
@@ -73,7 +86,7 @@ export async function settleUrl(
     const [settled] = await tx
       .update(urlTable)
       .set({ status: outcome, updatedAt: new Date(), ...fields })
-      .where(and(eq(urlTable.id, urlId), notDone))
+      .where(and(eq(urlTable.id, urlId), inArray(urlTable.status, ["pending", "processing"])))
       .returning()
 
     if (!settled) return null
