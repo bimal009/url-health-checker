@@ -15,11 +15,13 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
   const [cancelling, setCancelling] = useState(false)
   const [retrying, setRetrying] = useState(false)
 
+  const streaming = !isTerminal(batch.status)
+
   useEffect(() => {
-    if (isTerminal(initialBatch.status)) return
+    if (!streaming) return
 
     const source = new EventSource(
-      `${process.env.NEXT_PUBLIC_API_URL}/batches/${initialBatch.id}/events`
+      `${process.env.NEXT_PUBLIC_API_URL}/batches/${batch.id}/events`
     )
     source.onmessage = (event) => {
       try {
@@ -37,7 +39,7 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
     }
 
     return () => source.close()
-  }, [initialBatch.id, initialBatch.status])
+  }, [batch.id, streaming])
 
   const terminal = isTerminal(batch.status)
   const progress = batch.totalUrls ? (batch.completedCount / batch.totalUrls) * 100 : 0
@@ -58,6 +60,7 @@ export default function BatchDetailClient({ initialBatch }: { initialBatch: Batc
     setRetrying(true)
     try {
       await retryFailed(batch.id)
+      setBatch((b) => (isTerminal(b.status) ? { ...b, status: "running" } : b))
       toast.success("Retrying failed URLs")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to retry failed URLs")
